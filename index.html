@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Точки — игра в тетради</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Marck+Script&display=swap" rel="stylesheet">
 <style>
 :root{--paper:#fbfaf4;--grid:#b9cde6;--b1:#f4e6c4;--b2:#d9c08f;--gl:#9a7b4f;--fr:#6b4a2b;--ink:#2a3140;--p1:#1f4fd8;--p2:#d62d3a;--muted:#6b7385;
@@ -375,12 +376,28 @@ function applyAct(a){
     }
   }finally{replaying=false;curAct=null;}
 }
+async function peerRoom(code,s){
+  if(!window.Peer)throw {message:'нет PeerJS, проверьте интернет'};
+  const hs={};let conn=null;
+  const room={emit:async(t,d)=>{if(conn&&conn.open)conn.send({t,d});},on:(t,f)=>{hs[t]=f;}};
+  const wire=c=>{conn=c;c.on('data',m=>{if(m&&hs[m.t])hs[m.t]({isMe:false,data:m.d});});c.on('close',()=>{conn=null;$('rinfo').textContent='Соединение потеряно. Обновите страницу.';});};
+  await new Promise((res,rej)=>{
+    const id='tochki-gm-'+code,p=new Peer(s===1?id:undefined),to=setTimeout(()=>rej({message:'нет ответа'}),12000);
+    p.on('error',e=>{clearTimeout(to);rej(e);});
+    if(s===1){p.on('open',()=>{clearTimeout(to);res();});p.on('connection',wire);}
+    else p.on('open',()=>{const c=p.connect(id,{reliable:true});c.on('open',()=>{clearTimeout(to);wire(c);res();});});
+  });
+  return room;
+}
 async function connect(code,s){
   $('mk').disabled=$('jn').disabled=true;
-  const room=window.claude?await claude.use('room'):null;
-  if(!room){$('rinfo').textContent='Онлайн недоступен: откройте игру по ссылке, войдя в аккаунт.';$('mk').disabled=$('jn').disabled=false;return;}
-  try{RM=await room.join('tochki-'+code);}
-  catch(e){$('rinfo').textContent='Не удалось войти в комнату ('+((e&&e.code)||'ошибка')+').';$('mk').disabled=$('jn').disabled=false;return;}
+  try{
+    if(window.claude){const room=await claude.use('room');if(!room)throw {message:'нет доступа к странице'};RM=await room.join('tochki-'+code);}
+    else RM=await peerRoom(code,s);
+  }catch(e){
+    $('rinfo').textContent='Не удалось подключиться ('+((e&&(e.type||e.code||e.message))||'ошибка')+'). '+(s===2?'Проверьте код и что друг уже создал комнату.':'Попробуйте ещё раз.');
+    $('mk').disabled=$('jn').disabled=false;return;
+  }
   side=s;
   RM.on('ready',m=>{
     if(m.isMe)return;const d=m.data||{};
@@ -401,7 +418,7 @@ async function connect(code,s){
 function setMode(on){online=on;$('onl').hidden=!on;$('mLocal').classList.toggle('sel',!on);$('mOnline').classList.toggle('sel',on);$('go').textContent=on?'Готов':'Начать игру';renderPk();}
 $('mLocal').onclick=()=>{if(!RM)setMode(false);};
 $('mOnline').onclick=()=>setMode(true);
-$('mk').onclick=()=>{const c=String(1000+Math.floor(Math.random()*9000));$('code').value=c;connect(c,1);};
+$('mk').onclick=()=>{const c=String(100000+Math.floor(Math.random()*900000));$('code').value=c;connect(c,1);};
 $('jn').onclick=()=>{const c=$('code').value.replace(/\D/g,'').slice(0,6);if(c.length<4){$('rinfo').textContent='Введите код из 4 цифр';return;}connect(c,2);};
 $('go').onclick=()=>{
   if(!online){init();return;}
