@@ -38,6 +38,9 @@ button:focus-visible{outline:3px solid var(--p1);outline-offset:2px}
 .hr:last-child{border:none}.hr .ic{width:36px;height:44px;flex:none}.hr b{display:block}.hr span{font-size:.92rem}
 .opts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;font-size:1.05rem}
 #mv{margin:0}
+#lobby{width:100%}#gl{display:flex;flex-direction:column;gap:6px;width:100%;margin-top:6px}
+.gi{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;border:2px solid var(--ink);border-radius:10px}
+#gname{font:inherit;width:9em;background:var(--paper);color:var(--ink);border:2px solid var(--ink);border-radius:6px;padding:4px 8px}
 .tg.sel{background:color-mix(in srgb,currentColor 16%,transparent);border-width:3px}
 #onl{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;max-width:640px}
 #onl input{font:inherit;font-size:1.1rem;width:5em;text-align:center;background:var(--paper);color:var(--ink);border:2px solid var(--ink);border-radius:6px;padding:2px 6px}
@@ -68,7 +71,12 @@ select{font:inherit;font-size:1.1rem;background:var(--paper);color:var(--ink);bo
 </div>
 <div id="setup">
  <div id="modes"><button id="mLocal" class="tg sel">One screen</button> <button id="mOnline" class="tg">Online with a friend</button></div>
- <div id="onl" hidden><button id="qm">Find opponent</button> <button id="qc" hidden>Cancel search</button> <span>·</span> <button id="mk">Create room</button> <span>or</span> <input id="code" inputmode="numeric" maxlength="6" placeholder="code"> <button id="jn">Join</button><div id="rinfo"></div></div>
+ <div id="onl" hidden>
+ <input id="gname" maxlength="16" placeholder="Your name">
+ <button id="mo">Create open game</button> <button id="qm">Find opponent</button> <button id="qc" hidden>Cancel</button>
+ <div id="lobby"><b>Open games</b> <button id="rf">Refresh</button><div id="gl"></div></div>
+ <div>Private game by code: <button id="mk">Create room</button> <span>or</span> <input id="code" inputmode="numeric" maxlength="6" placeholder="code"> <button id="jn">Join</button></div>
+ <div id="rinfo"></div></div>
  <div>Max heroes: <select id="mx"><option>3</option><option selected>4</option><option>5</option></select></div>
  <div class="opts">Board: <select id="sz"><option value="12">12×12</option><option value="15" selected>15×15</option><option value="18">18×18</option></select> Move limit: <select id="ml"><option value="0">none</option><option value="30">30</option><option value="50" selected>50</option><option value="80">80</option></select> <label><input type="checkbox" id="cf"> confirm by second tap</label></div>
  <div class="pk" id="pk1"></div><div class="pk" id="pk2"></div>
@@ -486,50 +494,68 @@ function afterJoin(s,info){
   $('rinfo').textContent=info;
   renderPk();
 }
-async function quickRoom(){
-  if(!window.Peer)throw {message:'PeerJS not loaded, check your internet'};
-  const hs={};let conn=null;
-  const room={side:0,emit:async(t,d)=>{if(conn&&conn.open)conn.send({t,d});},on:(t,f)=>{hs[t]=f;}};
-  const wire=c=>{conn=c;c.on('data',m=>{if(m&&hs[m.t])hs[m.t]({isMe:false,data:m.d});});c.on('close',()=>{conn=null;$('rinfo').textContent='Connection lost. Reload the page.';});};
-  const probe=await new Promise((res,rej)=>{const p=new Peer();p.on('open',()=>res(p));p.on('error',rej);});
-  let probeErr=null;probe.on('error',e=>{if(probeErr)probeErr(e);});
-  const tryJoin=id=>new Promise(res=>{
-    const c=probe.connect(id,{reliable:true});
-    const to=setTimeout(()=>fin('timeout'),6000);
-    const fin=v=>{clearTimeout(to);probeErr=null;res(v);};
-    probeErr=e=>{if(e&&e.type==='peer-unavailable')fin('none');};
-    c.on('data',m=>{if(m&&m.t==='hi')fin(m.ok?c:'busy');});
-  });
-  const hostAt=id=>new Promise(res=>{const p=new Peer(id);p.on('error',e=>res(e&&e.type==='unavailable-id'?'taken':'err'));p.on('open',()=>res(p));});
-  const waitOpp=p=>new Promise(res=>{let used=false;p.on('connection',c=>{c.on('open',()=>{if(used){c.send({t:'hi',ok:false});setTimeout(()=>c.close(),400);return;}used=true;c.send({t:'hi',ok:true});res(c);});});});
-  let c=null,tries=0;
-  while(!c&&tries<60){
-    for(let i=1;i<=20&&!c;i++){
-      tries++;
-      const r=await tryJoin('tochki-gm-q-'+i);
-      if(r&&typeof r==='object'){c=r;room.side=2;}
-      else if(r==='none'){
-        const p=await hostAt('tochki-gm-q-'+i);
-        if(typeof p==='object'){c=await waitOpp(p);room.side=1;}
-        else if(p==='taken'){i--;await new Promise(z=>setTimeout(z,300));}
-      }
-    }
-  }
-  if(!c)throw {message:'timeout'};
-  wire(c);return room;
+const NS=16,SLOT=i=>'tochki-gm-q-'+i,qpend={};
+let LP=null;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function getLP(){if(LP)return LP;LP=new Promise((res,rej)=>{if(!window.Peer){rej({message:'PeerJS not loaded, check your internet'});return;}const p=new Peer();p.on('open',()=>res(p));p.on('error',e=>{const m=/tochki-gm-q-\d+/.exec((e&&e.message)||'');if(m&&qpend[m[0]])qpend[m[0]]();else if(!p.open)rej(e);});});return LP;}
+function ask(lp,id,msg,types){return new Promise(res=>{const c=lp.connect(id,{reliable:true});let to;const fin=v=>{clearTimeout(to);delete qpend[id];res(v);};to=setTimeout(()=>{try{c.close();}catch(e){}fin('timeout');},6000);qpend[id]=()=>fin('none');c.on('open',()=>c.send(msg));c.on('data',m=>{if(m&&types.includes(m.t))fin({c,m});});});}
+function mkRoom(){const hs={};let conn=null;return {side:0,emit:async(t,d)=>{if(conn&&conn.open)conn.send({t,d});},on:(t,f)=>{hs[t]=f;},wire:c=>{conn=c;c.on('data',m=>{if(m&&hs[m.t])hs[m.t]({isMe:false,data:m.d});});c.on('close',()=>{conn=null;$('rinfo').textContent='Connection lost. Reload the page.';});}};}
+const hostAt=id=>new Promise(res=>{const p=new Peer(id);p.on('error',e=>res(e&&e.type==='unavailable-id'?'taken':'err'));p.on('open',()=>res(p));});
+const gInfo=()=>({name:$('gname').value.trim().slice(0,16)||'?',n:+$('sz').value,ml:+$('ml').value});
+function waitOpp(p){return new Promise(res=>{let used=false;p.on('connection',c=>{c.on('data',m=>{if(!m)return;
+  if(m.t==='peek'){c.send({t:'info',info:Object.assign({busy:used},gInfo())});setTimeout(()=>c.close(),300);}
+  else if(m.t==='join'){if(used){c.send({t:'hi',ok:false});setTimeout(()=>c.close(),300);return;}used=true;c.send({t:'hi',ok:true});res(c);}});});});}
+async function becomeHost(p){const room=mkRoom();const c=await waitOpp(p);room.wire(c);room.side=1;return room;}
+function joinFound(r){const room=mkRoom();room.wire(r.c);room.side=2;return room;}
+function lockUI(on){['qm','mo','mk','jn'].forEach(k=>$(k).disabled=on);$('qc').hidden=!on;}
+function fail(e){const k=e&&e.message;$('rinfo').textContent=k==='GONE'?'That game is no longer available.':k==='NOSLOT'?'No free slots, try again later.':'Could not connect ('+((e&&(e.type||e.code||e.message))||'error')+'). Try again.';lockUI(false);}
+async function createOpen(){
+  lockUI(true);
+  try{
+    if(!window.Peer)throw {message:'PeerJS not loaded, check your internet'};
+    let p=null;for(let i=1;i<=NS&&!p;i++){const r=await hostAt(SLOT(i));if(typeof r==='object')p=r;}
+    if(!p)throw {message:'NOSLOT'};
+    $('rinfo').textContent='Game is open, waiting for a player… Keep this page open.';
+    RM=await becomeHost(p);
+  }catch(e){fail(e);return;}
+  lockUI(false);$('qc').hidden=true;afterJoin(1,'Player found! You are blue. Pick your heroes and press “Ready”.');
 }
 async function connectQuick(){
-  $('mk').disabled=$('jn').disabled=$('qm').disabled=true;$('qc').hidden=false;$('rinfo').textContent='Looking for an opponent… Keep this page open.';
-  try{RM=await quickRoom();}
-  catch(e){$('rinfo').textContent='Could not find an opponent ('+((e&&(e.type||e.code||e.message))||'error')+'). Try again.';$('mk').disabled=$('jn').disabled=$('qm').disabled=false;$('qc').hidden=true;return;}
-  $('qc').hidden=true;
-  afterJoin(RM.side,RM.side===1?'Opponent found! You are blue. Pick your heroes and press “Ready”.':'Opponent found! You are red. Pick your heroes and press “Ready”.');
+  lockUI(true);$('rinfo').textContent='Looking for an opponent… Keep this page open.';
+  try{
+    const lp=await getLP();let tries=0;
+    while(!RM&&tries<60){
+      for(let i=1;i<=NS&&!RM;i++){
+        tries++;
+        const r=await ask(lp,SLOT(i),{t:'join'},['hi']);
+        if(r&&r.c&&r.m.ok)RM=joinFound(r);
+        else if(r==='none'){const p=await hostAt(SLOT(i));if(typeof p==='object')RM=await becomeHost(p);else if(p==='taken'){i--;await new Promise(z=>setTimeout(z,300));}}
+      }
+    }
+    if(!RM)throw {message:'timeout'};
+  }catch(e){fail(e);return;}
+  lockUI(false);$('qc').hidden=true;afterJoin(RM.side,RM.side===1?'Player found! You are blue. Pick your heroes and press “Ready”.':'You joined the game! You are red. Pick your heroes and press “Ready”.');
 }
-function setMode(on){online=on;$('onl').hidden=!on;$('mLocal').classList.toggle('sel',!on);$('mOnline').classList.toggle('sel',on);$('go').textContent=on?'Ready':'Start game';renderPk();}
+async function joinSlot(i){
+  lockUI(true);
+  try{const lp=await getLP();const r=await ask(lp,SLOT(i),{t:'join'},['hi']);if(!(r&&r.c&&r.m.ok))throw {message:'GONE'};RM=joinFound(r);}
+  catch(e){fail(e);refreshList().catch(()=>{});return;}
+  lockUI(false);$('qc').hidden=true;afterJoin(2,'You joined the game! You are red. Pick your heroes and press “Ready”.');
+}
+async function refreshList(){
+  const g=$('gl');g.textContent='…';
+  const lp=await getLP();
+  const rs=await Promise.all(Array.from({length:NS},(_,k)=>ask(lp,SLOT(k+1),{t:'peek'},['info']).then(r=>({i:k+1,r}))));
+  const open=rs.filter(x=>x.r&&x.r.m&&x.r.m.info&&!x.r.m.info.busy);
+  g.innerHTML=open.length?open.map(x=>{const f=x.r.m.info,n=(+f.n)||15,ml=(+f.ml)||0;return '<div class="gi"><span><b>'+esc(f.name)+'</b> · '+n+'×'+n+' · '+(ml?ml+' moves':'no limit')+'</span><button data-i="'+x.i+'">+</button></div>';}).join(''):'No open games yet. Create your own!';
+}
+function setMode(on){online=on;if(on&&!window.claude&&!RM)refreshList().catch(()=>{});$('onl').hidden=!on;$('mLocal').classList.toggle('sel',!on);$('mOnline').classList.toggle('sel',on);$('go').textContent=on?'Ready':'Start game';renderPk();}
 $('mLocal').onclick=()=>{if(!RM)setMode(false);};
 $('mOnline').onclick=()=>setMode(true);
 $('qm').onclick=connectQuick;$('qc').onclick=()=>location.reload();
-if(window.claude)$('qm').hidden=true;
+$('mo').onclick=createOpen;$('rf').onclick=()=>refreshList().catch(()=>{});
+$('gl').onclick=e=>{const b=e.target.closest('button[data-i]');if(b)joinSlot(+b.dataset.i);};
+if(window.claude){$('qm').hidden=true;$('mo').hidden=true;$('lobby').hidden=true;}
 $('mk').onclick=()=>{const c=String(100000+Math.floor(Math.random()*900000));$('code').value=c;connect(c,1);};
 $('jn').onclick=()=>{const c=$('code').value.replace(/\D/g,'').slice(0,6);if(c.length<4){$('rinfo').textContent='Enter the code (at least 4 digits)';return;}connect(c,2);};
 $('go').onclick=()=>{
