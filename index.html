@@ -38,6 +38,7 @@ button:focus-visible{outline:3px solid var(--p1);outline-offset:2px}
 .hr:last-child{border:none}.hr .ic{width:36px;height:44px;flex:none}.hr b{display:block}.hr span{font-size:.92rem}
 .opts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;font-size:1.05rem}
 #mv{margin:0}
+.seg{display:flex;flex-direction:column;gap:6px;text-align:left;font-weight:600}.seg input{width:18px;height:18px;vertical-align:middle}
 #lobby{width:100%}#gl{display:flex;flex-direction:column;gap:6px;width:100%;margin-top:6px}
 .gi{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 10px;border:2px solid var(--ink);border-radius:10px}
 #gname{font:inherit;width:9em;background:var(--paper);color:var(--ink);border:2px solid var(--ink);border-radius:6px;padding:4px 8px}
@@ -73,9 +74,10 @@ select{font:inherit;font-size:1.1rem;background:var(--paper);color:var(--ink);bo
  <div id="modes"><button id="mLocal" class="tg sel">One screen</button> <button id="mOnline" class="tg">Online with a friend</button></div>
  <div id="onl" hidden>
  <input id="gname" maxlength="16" placeholder="Your name">
- <button id="mo">Create open game</button> <button id="qm">Find opponent</button> <button id="qc" hidden>Cancel</button>
+ <div class="seg" id="seg"><label><input type="radio" name="gt" value="open" checked> Open — anyone can join</label><label><input type="radio" name="gt" value="closed"> Closed — join by a 5-digit code</label></div>
+ <button id="cg">Create game</button> <button id="qm">Find opponent</button> <button id="qc" hidden>Cancel</button>
  <div id="lobby"><b>Open games</b> <button id="rf">Refresh</button><div id="gl"></div></div>
- <div>Private game by code: <button id="mk">Create room</button> <span>or</span> <input id="code" inputmode="numeric" maxlength="6" placeholder="code"> <button id="jn">Join</button></div>
+ <div>Join by code: <input id="code" inputmode="numeric" maxlength="5" placeholder="code"> <button id="jn">Join</button></div>
  <div id="rinfo"></div></div>
  <div>Max heroes: <select id="mx"><option>3</option><option selected>4</option><option>5</option></select></div>
  <div class="opts">Board: <select id="sz"><option value="12">12×12</option><option value="15" selected>15×15</option><option value="18">18×18</option></select> Move limit: <select id="ml"><option value="0">none</option><option value="30">30</option><option value="50" selected>50</option><option value="80">80</option></select> <label><input type="checkbox" id="cf"> confirm by second tap</label></div>
@@ -139,7 +141,7 @@ puppet:['Doom Puppeteer','phys','Moves up to 3 cells, can kill an enemy and take
 song:['Song of Bones','','Resurrects your fallen dot next to your own'],
 mind:['Mind Lord','mag','Takes an enemy soldier (not a hero)']};
 const RC={elf:['🧝 Elves',['blade','dusk','storm']],human:['🧍 Humans',['gate','astral','guard']],
-orc:['🪓 Orcs',['clone','hunter','ghost']],undead:['☠️ Undead',['stone','puppet','mind']]};
+orc:['🪓 Orcs',['clone','hunter','ghost']],undead:['☠️ Undead',['puppet','mind']]};
 const POOL=Object.values(RC).flatMap(r=>r[1]);
 const chosen={1:new Set(),2:new Set()};
 let online=false,side=0,RM=null,LOG=[],replaying=false,curAct=null,started=false,oppHeroes=null,myHeroes=null,timer=null;
@@ -196,7 +198,7 @@ function ui(){
   const a=$('abil');a.innerHTML='';
   if(over)return;
   if(online&&started&&turn!==side){a.textContent="Opponent's turn…";return;}
-  if(mode){const b=document.createElement('button');b.textContent='Cancel';b.onclick=()=>{mode=null;say(name(turn)+"'s turn");ui()};a.append(b);return;}
+  if(mode){const b=document.createElement('button');b.textContent='Cancel';b.onclick=()=>{mode=null;say(name(turn)+"'s turn");ui()};a.append(b);if(mode.p.length===1&&S[mode.id].length>1){const s2=document.createElement('button');s2.textContent='Place without ability';s2.onclick=()=>{skipAbility();if(online&&started)send('log',{g:G,log:LOG});};a.append(s2);}return;}
   for(const id of race[turn]){
     const b=document.createElement('button');b.className='hb';b.title=AB[id][2];b.style.color=col(turn);
     b.innerHTML='<img class="fg" src="'+FIGURL[id]+'" alt=""><span>'+AB[id][0]+'</span>';
@@ -232,7 +234,7 @@ dusk:[put],stone:[put],
 trap:[put,['Cell for the trap',(x,y,p)=>emp(x,y)||other(x,y,p)||(traps.some(t=>t.x===x&&t.y===y)?'There is already a trap here':'')]],
 song:[put,['Cell where your dot fell, next to the hero',(x,y,p)=>gy[turn].includes(x+','+y)&&!st[y][x]&&!enclosed(3-turn)[y][x]&&cheb(x,y,p[0][0],p[0][1])<=1&&!other(x,y,p)?'':'Need a death cell next to the hero']],
 mind:[put,['Choose an enemy soldier',(x,y)=>foe(x,y)||(Object.keys(fl[y][x]).length?'That is a hero':'')||hit(x,y,'mind')]]};
-function kill(x,y){gy[st[y][x]].push(x+','+y);st[y][x]=0;cap[y][x]=0;safe[y][x]=false;fl[y][x]={};}
+function kill(x,y){addAnim('burst',x,y,scol(st[y][x]));gy[st[y][x]].push(x+','+y);st[y][x]=0;cap[y][x]=0;safe[y][x]=false;fl[y][x]={};}
 function moveDot(a,b,x,y){st[y][x]=st[b][a];fl[y][x]=fl[b][a];cap[y][x]=0;safe[y][x]=false;st[b][a]=0;fl[b][a]={};cap[b][a]=0;}
 const setf=k=>p=>{fl[p[0][1]][p[0][0]][k]=true;return ''};
 const zone=k=>p=>{zones.push({x:p[0][0],y:p[0][1],k,o:turn});return ''};
@@ -268,7 +270,7 @@ function resolve(me,pre){
   pend=null;$('card').hidden=true;tn[me]++;
   const op=3-me,enc=enclosed(me);let got=0;
   for(let j=0;j<N;j++)for(let i=0;i<N;i++)
-    if(enc[j][i]&&st[j][i]===op&&!cap[j][i]&&!safe[j][i]&&!fl[j][i].noCap){cap[j][i]=me;got++;}
+    if(enc[j][i]&&st[j][i]===op&&!cap[j][i]&&!safe[j][i]&&!fl[j][i].noCap){cap[j][i]=me;got++;addAnim('flash',i,j,'#ffe9a8');}
   for(let ch=true;ch;){ch=false;
     for(const o of[1,2]){const e=enclosed(o);
       for(let j=0;j<N;j++)for(let i=0;i<N;i++)if(cap[j][i]===o&&(!e[j][i]||st[j][i]!==3-o)){cap[j][i]=0;ch=true;}}}
@@ -284,25 +286,35 @@ function move(x,y){
   if(enclosed(3-turn)[y][x]){say('You cannot place inside an enemy loop');return;}
   if(!replaying)LOG.push(x*N+y);
   const me=turn,op=3-me;
-  st[y][x]=me;last=[x,y];
+  st[y][x]=me;last=[x,y];addAnim('pop',x,y);
   const ti=traps.findIndex(t=>t.x===x&&t.y===y&&t.o===op);
   if(ti>=0){traps.splice(ti,1);kill(x,y);resolve(me,'💥 Trap! The dot is destroyed. ');return;}
   if(enclosed(op)[y][x])safe[y][x]=true;
   resolve(me,'');
 }
+function skipAbility(){
+  if(!mode||mode.p.length!==1||S[mode.id].length<2)return;
+  const id=mode.id,me=turn,[hx,hy]=mode.p[0];
+  if(!replaying){curAct=[id,mode.p.flat(),0,1];LOG.push(curAct);}
+  st[hy][hx]=me;fl[hy][hx]={hero:id};used[me][id]=true;last=null;addAnim('pop',hx,hy);addAnim('ring',hx,hy,scol(me));
+  if(enclosed(3-me)[hy][hx])safe[hy][hx]=true;
+  resolve(me,AB[id][0]+': placed without using the ability. ');
+}
+function anyTarget(spec,p){for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(!spec[p.length][1](x,y,p))return true;return false;}
 function pick(x,y){
   const spec=S[mode.id],k=mode.p.length,err=spec[k][1](x,y,mode.p);
   if(err){say(err);return;}
   mode.p.push([x,y]);
   const fizzle=k===0&&MAGE(mode.id)&&mb(x,y,turn);
-  if(!fizzle&&mode.p.length<spec.length){say(spec[k+1][0]);return;}
+  const noTgt=!fizzle&&mode.p.length<spec.length&&!anyTarget(spec,mode.p);
+  if(!fizzle&&!noTgt&&mode.p.length<spec.length){say(spec[k+1][0]);ui();return;}
   const id=mode.id,me=turn,[hx,hy]=mode.p[0];
   if(!replaying){curAct=[id,mode.p.flat(),0];LOG.push(curAct);}
-  st[hy][hx]=me;fl[hy][hx]={hero:id};used[me][id]=true;last=null;
+  st[hy][hx]=me;fl[hy][hx]={hero:id};used[me][id]=true;last=null;addAnim('pop',hx,hy);addAnim('ring',hx,hy,scol(me));
   const ti=traps.findIndex(t=>t.x===hx&&t.y===hy&&t.o!==me);
   if(ti>=0){traps.splice(ti,1);kill(hx,hy);resolve(me,'💥 Trap! The hero died. ');return;}
   if(enclosed(3-me)[hy][hx])safe[hy][hx]=true;
-  resolve(me,fizzle?AB[id][0]+': magic is disabled by the enemy Veil. ':AB[id][0]+'! '+RUN[id](mode.p));
+  resolve(me,noTgt?AB[id][0]+': no target — the ability was not used, the hero is just placed. ':fizzle?AB[id][0]+': magic is disabled by the enemy Veil. ':AB[id][0]+'! '+RUN[id](mode.p));
 }
 function surrender(p){if(over)return;over=true;say((p===1?'Blue':'Red')+' surrendered. '+(p===1?'Red':'Blue')+' wins.');ui();draw();}
 function finish(){
@@ -347,6 +359,22 @@ function gem(x,y,r,c){
   ctx.stroke();
   poly(x,y,r,8,Math.PI/8);ctx.strokeStyle=shade(c,-.6);ctx.lineWidth=1;ctx.stroke();
   ctx.fillStyle='rgba(255,255,255,.85)';ctx.beginPath();ctx.ellipse(x-r*.28,y-r*.32,r*.2,r*.11,-.7,0,7);ctx.fill();
+}
+let ANIM=[],animOn=false;
+const DUR={pop:380,ring:650,burst:600,flash:700},REDUCE=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function animLoop(){const n=performance.now();ANIM=ANIM.filter(a=>n-a.t<a.d);draw();if(ANIM.length)requestAnimationFrame(animLoop);else animOn=false;}
+function addAnim(k,x,y,c){if(REDUCE)return;ANIM.push({k,x,y,t:performance.now(),d:DUR[k],c});if(!animOn){animOn=true;requestAnimationFrame(animLoop);}}
+function popScale(x,y){const a=ANIM.find(q=>q.k==='pop'&&q.x===x&&q.y===y);if(!a)return 1;const u=Math.min(1,(performance.now()-a.t)/a.d)-1;return .15+.85*(1+2.70158*u*u*u+1.70158*u*u);}
+function drawFX(m,P){
+  const now=performance.now();
+  for(const a of ANIM){
+    const p=Math.min(1,(now-a.t)/a.d),x=P(a.x),y=P(a.y);
+    ctx.save();
+    if(a.k==='ring'){ctx.globalAlpha=1-p;ctx.strokeStyle=a.c;ctx.lineWidth=3*(1-p)+1;ctx.beginPath();ctx.arc(x,y,m*(.3+1.3*p),0,7);ctx.stroke();}
+    else if(a.k==='burst'){ctx.globalAlpha=1-p;ctx.fillStyle=a.c;for(let i=0;i<10;i++){const g=i*Math.PI/5+.3,d=m*(.2+.9*p);ctx.beginPath();ctx.arc(x+Math.cos(g)*d,y+Math.sin(g)*d,m*.09*(1-p)+1,0,7);ctx.fill();}}
+    else if(a.k==='flash'){ctx.globalAlpha=Math.sin(p*Math.PI)*.9;ctx.strokeStyle=a.c;ctx.lineWidth=3;ctx.shadowColor=a.c;ctx.shadowBlur=12;ctx.beginPath();ctx.arc(x,y,m*(.35+.25*p),0,7);ctx.stroke();}
+    ctx.restore();
+  }
 }
 function draw(){
   const dpr=window.devicePixelRatio||1,S2=c.clientWidth;
@@ -404,6 +432,7 @@ function draw(){
   for(const t of traps){ctx.fillStyle=scol(t.o);ctx.fillText('✕',P(t.x)-m*.17,P(t.y)+m*.17);}
   for(let y=0;y<N;y++)for(let x=0;x<N;x++){
     const o=st[y][x];if(!o)continue;const f=fl[y][x],r=f.hero?m*.4:m*.22;
+    const pk=popScale(x,y);if(pk!==1){ctx.save();ctx.translate(P(x),P(y));ctx.scale(pk,pk);ctx.translate(-P(x),-P(y));}
     if(f.hero)medal(P(x),P(y),r,scol(o),f.hero,cap[y][x]);else if(!cap[y][x])gem(P(x),P(y),r,scol(o));else{ctx.beginPath();ctx.arc(P(x),P(y),r,0,7);ctx.fillStyle=scol(o);ctx.fill();}
     if(cap[y][x]&&!f.hero){
       ctx.beginPath();ctx.arc(P(x),P(y),r*1.8,0,7);ctx.strokeStyle=scol(cap[y][x]);ctx.lineWidth=2;ctx.stroke();
@@ -413,8 +442,10 @@ function draw(){
     
     const bd=(f.fly?'F':'')+(f.noPhys?'P':'')+(f.noMag?'M':'')+(f.noCap?'C':'');
     if(bd){const fs=Math.max(11,m*.42);ctx.font='bold '+fs+'px sans-serif';const tw=ctx.measureText(bd).width,bx=P(x)+r*.7,by=P(y)-r*1.1;ctx.fillStyle='rgba(255,255,255,.93)';ctx.strokeStyle=scol(o);ctx.lineWidth=1.5;ctx.beginPath();ctx.rect(bx-3,by-fs,tw+6,fs+4);ctx.fill();ctx.stroke();ctx.fillStyle='#1d2230';ctx.fillText(bd,bx,by);}
+    if(pk!==1)ctx.restore();
   }
   if(last&&!over){ctx.beginPath();ctx.arc(P(last[0]),P(last[1]),m*.38,0,7);ctx.strokeStyle=scol(3-turn);ctx.lineWidth=1.5;ctx.setLineDash([3,3]);ctx.stroke();ctx.setLineDash([]);}
+  drawFX(m,P);
   if(pend&&!over){const px=P(pend.x),py=P(pend.y);ctx.globalAlpha=.55;gem(px,py,m*.22,scol(turn));ctx.globalAlpha=1;ctx.beginPath();ctx.arc(px,py,m*.42,0,7);ctx.strokeStyle=scol(turn);ctx.lineWidth=2;ctx.setLineDash([4,3]);ctx.stroke();ctx.setLineDash([]);}
 }
 c.addEventListener('click',e=>{
@@ -448,6 +479,7 @@ function applyAct(a){
     else if(Array.isArray(a)&&S[a[0]]&&race[turn].includes(a[0])&&!used[turn][a[0]]&&Array.isArray(a[1])){
       mode={id:a[0],p:[]};
       for(let i=0;i+1<a[1].length;i+=2){const x=a[1][i],y=a[1][i+1];if(Number.isInteger(x)&&Number.isInteger(y)&&x>=0&&y>=0&&x<N&&y<N)pick(x,y);}
+      if(a[3])skipAbility();
       mode=null;
     }
   }finally{replaying=false;curAct=null;}
@@ -466,13 +498,13 @@ async function peerRoom(code,s){
   return room;
 }
 async function connect(code,s){
-  $('mk').disabled=$('jn').disabled=true;
+  $('cg').disabled=$('jn').disabled=true;
   try{
     if(window.claude){const room=await claude.use('room');if(!room)throw {message:'no access to the page'};RM=await room.join('tochki-'+code);}
     else RM=await peerRoom(code,s);
   }catch(e){
     $('rinfo').textContent='Could not connect ('+((e&&(e.type||e.code||e.message))||'error')+'). '+(s===2?'Check the code and that your friend has already created the room.':'Try again.');
-    $('mk').disabled=$('jn').disabled=false;return;
+    $('cg').disabled=$('jn').disabled=false;return;
   }
   afterJoin(s,s===1?'Room '+code+'. You are blue. Tell your friend the code, pick your heroes and press “Ready”.':'Room '+code+'. You are red. Pick your heroes and press “Ready”.');
 }
@@ -507,7 +539,7 @@ function waitOpp(p){return new Promise(res=>{let used=false;p.on('connection',c=
   else if(m.t==='join'){if(used){c.send({t:'hi',ok:false});setTimeout(()=>c.close(),300);return;}used=true;c.send({t:'hi',ok:true});res(c);}});});});}
 async function becomeHost(p){const room=mkRoom();const c=await waitOpp(p);room.wire(c);room.side=1;return room;}
 function joinFound(r){const room=mkRoom();room.wire(r.c);room.side=2;return room;}
-function lockUI(on){['qm','mo','mk','jn'].forEach(k=>$(k).disabled=on);$('qc').hidden=!on;}
+function lockUI(on){['qm','cg','jn'].forEach(k=>$(k).disabled=on);$('qc').hidden=!on;}
 function fail(e){const k=e&&e.message;$('rinfo').textContent=k==='GONE'?'That game is no longer available.':k==='NOSLOT'?'No free slots, try again later.':'Could not connect ('+((e&&(e.type||e.code||e.message))||'error')+'). Try again.';lockUI(false);}
 async function createOpen(){
   lockUI(true);
@@ -553,11 +585,12 @@ function setMode(on){online=on;if(on&&!window.claude&&!RM)refreshList().catch(()
 $('mLocal').onclick=()=>{if(!RM)setMode(false);};
 $('mOnline').onclick=()=>setMode(true);
 $('qm').onclick=connectQuick;$('qc').onclick=()=>location.reload();
-$('mo').onclick=createOpen;$('rf').onclick=()=>refreshList().catch(()=>{});
+$('rf').onclick=()=>refreshList().catch(()=>{});
 $('gl').onclick=e=>{const b=e.target.closest('button[data-i]');if(b)joinSlot(+b.dataset.i);};
-if(window.claude){$('qm').hidden=true;$('mo').hidden=true;$('lobby').hidden=true;}
-$('mk').onclick=()=>{const c=String(100000+Math.floor(Math.random()*900000));$('code').value=c;connect(c,1);};
-$('jn').onclick=()=>{const c=$('code').value.replace(/\D/g,'').slice(0,6);if(c.length<4){$('rinfo').textContent='Enter the code (at least 4 digits)';return;}connect(c,2);};
+if(window.claude){$('qm').hidden=true;$('seg').hidden=true;$('lobby').hidden=true;}
+function createClosed(){const c=String(10000+Math.floor(Math.random()*90000));$('code').value=c;connect(c,1);}
+$('cg').onclick=()=>{const closed=window.claude||document.querySelector('input[name=gt]:checked').value==='closed';closed?createClosed():createOpen();};
+$('jn').onclick=()=>{const c=$('code').value.replace(/\D/g,'').slice(0,5);if(c.length<5){$('rinfo').textContent='Enter the 5-digit code';return;}connect(c,2);};
 $('go').onclick=()=>{
   if(!online){init();return;}
   myHeroes=[...chosen[side]];$('rinfo').textContent='Waiting for opponent…';renderPk();tick();tryStart();
