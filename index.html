@@ -75,7 +75,8 @@ select{font:inherit;font-size:1.1rem;background:var(--paper);color:var(--ink);bo
  <div id="onl" hidden>
  <input id="gname" maxlength="16" placeholder="Your name">
  <div class="seg" id="seg"><label><input type="radio" name="gt" value="open" checked> Open — anyone can join</label><label><input type="radio" name="gt" value="closed"> Closed — join by a 5-digit code</label></div>
- <button id="cg">Create game</button> <button id="qm">Find opponent</button> <button id="qc" hidden>Cancel</button>
+ <div>Who moves first: <select id="fs"><option value="me">me (blue)</option><option value="opp">opponent (red)</option><option value="rnd" selected>random</option></select></div>
+ <button id="cg">Create game</button> <button id="qm">Find opponent</button> <button id="qc" hidden>Cancel</button> <button id="sh" hidden>Share link</button> <button id="rs" hidden>Resume game</button>
  <div id="lobby"><b>Open games</b> <button id="rf">Refresh</button><div id="gl"></div></div>
  <div>Join by code: <input id="code" inputmode="numeric" maxlength="5" placeholder="code"> <button id="jn">Join</button></div>
  <div id="rinfo"></div></div>
@@ -178,20 +179,23 @@ const grid=f=>Array.from({length:N},()=>Array.from({length:N},f));
 const col=p=>getComputedStyle(document.documentElement).getPropertyValue(p===1?'--p1':'--p2').trim();
 const scol=p=>getComputedStyle(document.documentElement).getPropertyValue(p===1?'--s1':'--s2').trim();
 const name=p=>p===1?'Blue':'Red';
+const lbl=p=>(p===1?'Blue':'Red')+(nm[p]?' ('+nm[p]+')':'');
 let pend=null,ML=0,G=1,tn=[0,0,0],myRem=false,oppRem=false,oppSize=15,oppML=0;
+let myName='',oppName='',FIRST=1,oppFirst=1,myFirst=1,nm={1:'',2:''},SESS=null,gotHello=false;
+const SK='tochki_sess',sleep=ms=>new Promise(z=>setTimeout(z,ms));
 function init(){
-  if(!online){N=+$('sz').value;ML=+$('ml').value;}
+  if(!online){N=+$('sz').value;ML=+$('ml').value;FIRST=1;nm={1:'',2:''};}
   tn=[0,0,0];pend=null;myRem=oppRem=false;
   st=grid(()=>0);cap=grid(()=>0);safe=grid(()=>false);fl=grid(()=>({}));
-  turn=1;score=[0,0,0];over=false;last=null;used={1:{},2:{}};zones=[];traps=[];gy={1:[],2:[]};mode=null;
+  turn=FIRST;score=[0,0,0];over=false;last=null;used={1:{},2:{}};zones=[];traps=[];gy={1:[],2:[]};mode=null;
   race={1:POOL.filter(i=>chosen[1].has(i)),2:POOL.filter(i=>chosen[2].has(i))};
   $('setup').hidden=true;$('game').hidden=false;
-  say("Blue's turn");ui();draw();
+  say(name(turn)+"'s turn");ui();draw();
 }
 function say(t){$('msg').textContent=t}
-function ui(){
-  $('s1').textContent='Blue: '+score[1];
-  $('s2').textContent='Red: '+score[2];
+function ui(){if(online&&started)saveSess();
+  $('s1').textContent=lbl(1)+': '+score[1];
+  $('s2').textContent=lbl(2)+': '+score[2];
   $('mv').textContent=ML?'Moves left: blue '+Math.max(0,ML-tn[1])+', red '+Math.max(0,ML-tn[2]):'';
   $('rm').hidden=!over;$('rm').textContent=online&&myRem?'Waiting for opponent…':'Rematch';$('sur').hidden=over;$('end').hidden=over||online;
   $('s1').classList.toggle('on',!over&&turn===1);$('s2').classList.toggle('on',!over&&turn===2);
@@ -463,13 +467,18 @@ c.addEventListener('click',e=>{
   draw();
 });
 function send(t,d){if(RM)RM.emit(t,d).catch(()=>{});}
-function tick(){if(!RM)return;if(!started&&myHeroes)send('ready',{side,heroes:myHeroes,n:+$('sz').value,ml:+$('ml').value});if(started&&over&&myRem)send('ready',{side,rematch:G});if(started&&LOG.length)send('log',{g:G,log:LOG});}
-function tryRematch(){if(myRem&&oppRem){G++;LOG=[];init();say("Rematch! Blue's turn");ui();}}
+function tick(){if(!RM)return;
+  if(!started&&side===2)send('ready',{side,hello:true,name:$('gname').value.trim().slice(0,16)});
+  if(!started&&myHeroes)send('ready',{side,heroes:myHeroes,n:+$('sz').value,ml:+$('ml').value,name:myName,first:myFirst});
+  if(started&&over&&myRem)send('ready',{side,rematch:G});
+  if(started&&LOG.length)send('log',{g:G,log:LOG});
+}
+function tryRematch(){if(myRem&&oppRem){G++;LOG=[];FIRST=3-FIRST;init();say('Rematch! '+name(turn)+"'s turn");ui();}}
 function tryStart(){
   if(started||!myHeroes||!oppHeroes)return;
-  started=true;chosen[side]=new Set(myHeroes);chosen[3-side]=new Set(oppHeroes);LOG=[];
+  started=true;chosen[side]=new Set(myHeroes);chosen[3-side]=new Set(oppHeroes);LOG=[];FIRST=side===1?myFirst:oppFirst;nm={1:'',2:''};nm[side]=myName;nm[3-side]=oppName;
   $('end').hidden=true;G=1;N=side===1?+$('sz').value:oppSize;ML=side===1?+$('ml').value:oppML;init();
-  say(side===1?"Game started. You are blue, your turn":"Game started. You are red, wait for the opponent's move");ui();
+  say('Game started. You are '+(side===1?'blue':'red')+(turn===side?', your turn':", wait for the opponent's move"));ui();
 }
 function applyAct(a){
   replaying=true;curAct=a;mode=null;
@@ -490,7 +499,7 @@ async function peerRoom(code,s){
   const room={emit:async(t,d)=>{if(conn&&conn.open)conn.send({t,d});},on:(t,f)=>{hs[t]=f;}};
   const wire=c=>{conn=c;c.on('data',m=>{if(m&&hs[m.t])hs[m.t]({isMe:false,data:m.d});});c.on('close',()=>{conn=null;$('rinfo').textContent='Connection lost. Reload the page.';});};
   await new Promise((res,rej)=>{
-    const id='tochki-gm-'+code,p=new Peer(s===1?id:undefined),to=setTimeout(()=>rej({message:'no response'}),12000);
+    const id='tochki-gm-'+code,p=new Peer(s===1?id:undefined,ICE),to=setTimeout(()=>rej({message:'no response'}),12000);
     p.on('error',e=>{clearTimeout(to);rej(e);});
     if(s===1){p.on('open',()=>{clearTimeout(to);res();});p.on('connection',wire);}
     else p.on('open',()=>{const c=p.connect(id,{reliable:true});c.on('open',()=>{clearTimeout(to);wire(c);res();});});
@@ -502,6 +511,7 @@ async function connect(code,s){
   try{
     if(window.claude){const room=await claude.use('room');if(!room)throw {message:'no access to the page'};RM=await room.join('tochki-'+code);}
     else RM=await peerRoom(code,s);
+    SESS={kind:window.claude?'claude':'code',code,host:s===1};
   }catch(e){
     $('rinfo').textContent='Could not connect ('+((e&&(e.type||e.code||e.message))||'error')+'). '+(s===2?'Check the code and that your friend has already created the room.':'Try again.');
     $('cg').disabled=$('jn').disabled=false;return;
@@ -513,9 +523,11 @@ function afterJoin(s,info){
   RM.on('ready',m=>{
     if(m.isMe)return;const d=m.data||{};
     if(d.side===side)return;
+    if(d.hello){if(!gotHello){gotHello=true;oppName=String(d.name||'').slice(0,16);if(navigator.vibrate)navigator.vibrate(150);$('rinfo').textContent=(oppName||'A player')+' joined! Pick your heroes and press “Ready”.';}return;}
     if(d.rematch){if(d.rematch===G&&started){oppRem=true;tryRematch();}return;}
     if(!Array.isArray(d.heroes))return;
     oppSize=[12,15,18].includes(d.n)?d.n:15;oppML=[0,30,50,80].includes(d.ml)?d.ml:0;
+    oppName=String(d.name||'').slice(0,16);if(d.side===1)oppFirst=[1,2].includes(d.first)?d.first:1;
     oppHeroes=d.heroes.filter(i=>POOL.includes(i)).slice(0,5);tryStart();
   });
   RM.on('log',m=>{
@@ -526,13 +538,14 @@ function afterJoin(s,info){
   $('rinfo').textContent=info;
   renderPk();
 }
+const ICE={config:{iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:global.stun.twilio.com:3478'},{urls:'turn:openrelay.metered.ca:80',username:'openrelayproject',credential:'openrelayproject'},{urls:'turn:openrelay.metered.ca:443',username:'openrelayproject',credential:'openrelayproject'},{urls:'turn:openrelay.metered.ca:443?transport=tcp',username:'openrelayproject',credential:'openrelayproject'}]}};
 const NS=16,SLOT=i=>'tochki-gm-q-'+i,qpend={};
 let LP=null;
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function getLP(){if(LP)return LP;LP=new Promise((res,rej)=>{if(!window.Peer){rej({message:'PeerJS not loaded, check your internet'});return;}const p=new Peer();p.on('open',()=>res(p));p.on('error',e=>{const m=/tochki-gm-q-\d+/.exec((e&&e.message)||'');if(m&&qpend[m[0]])qpend[m[0]]();else if(!p.open)rej(e);});});return LP;}
+function getLP(){if(LP)return LP;LP=new Promise((res,rej)=>{if(!window.Peer){rej({message:'PeerJS not loaded, check your internet'});return;}const p=new Peer(undefined,ICE);p.on('open',()=>res(p));p.on('error',e=>{const m=/tochki-gm-q-\d+/.exec((e&&e.message)||'');if(m&&qpend[m[0]])qpend[m[0]]();else if(!p.open)rej(e);});});return LP;}
 function ask(lp,id,msg,types){return new Promise(res=>{const c=lp.connect(id,{reliable:true});let to;const fin=v=>{clearTimeout(to);delete qpend[id];res(v);};to=setTimeout(()=>{try{c.close();}catch(e){}fin('timeout');},6000);qpend[id]=()=>fin('none');c.on('open',()=>c.send(msg));c.on('data',m=>{if(m&&types.includes(m.t))fin({c,m});});});}
 function mkRoom(){const hs={};let conn=null;return {side:0,emit:async(t,d)=>{if(conn&&conn.open)conn.send({t,d});},on:(t,f)=>{hs[t]=f;},wire:c=>{conn=c;c.on('data',m=>{if(m&&hs[m.t])hs[m.t]({isMe:false,data:m.d});});c.on('close',()=>{conn=null;$('rinfo').textContent='Connection lost. Reload the page.';});}};}
-const hostAt=id=>new Promise(res=>{const p=new Peer(id);p.on('error',e=>res(e&&e.type==='unavailable-id'?'taken':'err'));p.on('open',()=>res(p));});
+const hostAt=id=>new Promise(res=>{const p=new Peer(id,ICE);p.on('error',e=>res(e&&e.type==='unavailable-id'?'taken':'err'));p.on('open',()=>res(p));});
 const gInfo=()=>({name:$('gname').value.trim().slice(0,16)||'?',n:+$('sz').value,ml:+$('ml').value});
 function waitOpp(p){return new Promise(res=>{let used=false;p.on('connection',c=>{c.on('data',m=>{if(!m)return;
   if(m.t==='peek'){c.send({t:'info',info:Object.assign({busy:used},gInfo())});setTimeout(()=>c.close(),300);}
@@ -545,10 +558,10 @@ async function createOpen(){
   lockUI(true);
   try{
     if(!window.Peer)throw {message:'PeerJS not loaded, check your internet'};
-    let p=null;for(let i=1;i<=NS&&!p;i++){const r=await hostAt(SLOT(i));if(typeof r==='object')p=r;}
+    let p=null,si=0;for(let i=1;i<=NS&&!p;i++){const r=await hostAt(SLOT(i));if(typeof r==='object'){p=r;si=i;}}
     if(!p)throw {message:'NOSLOT'};
     $('rinfo').textContent='Game is open, waiting for a player… Keep this page open.';
-    RM=await becomeHost(p);
+    RM=await becomeHost(p);SESS={kind:'slot',slot:si,host:true};
   }catch(e){fail(e);return;}
   lockUI(false);$('qc').hidden=true;afterJoin(1,'Player found! You are blue. Pick your heroes and press “Ready”.');
 }
@@ -560,8 +573,8 @@ async function connectQuick(){
       for(let i=1;i<=NS&&!RM;i++){
         tries++;
         const r=await ask(lp,SLOT(i),{t:'join'},['hi']);
-        if(r&&r.c&&r.m.ok)RM=joinFound(r);
-        else if(r==='none'){const p=await hostAt(SLOT(i));if(typeof p==='object')RM=await becomeHost(p);else if(p==='taken'){i--;await new Promise(z=>setTimeout(z,300));}}
+        if(r&&r.c&&r.m.ok){RM=joinFound(r);SESS={kind:'slot',slot:i,host:false};}
+        else if(r==='none'){const p=await hostAt(SLOT(i));if(typeof p==='object'){RM=await becomeHost(p);SESS={kind:'slot',slot:i,host:true};}else if(p==='taken'){i--;await new Promise(z=>setTimeout(z,300));}}
       }
     }
     if(!RM)throw {message:'timeout'};
@@ -570,32 +583,32 @@ async function connectQuick(){
 }
 async function joinSlot(i){
   lockUI(true);
-  try{const lp=await getLP();const r=await ask(lp,SLOT(i),{t:'join'},['hi']);if(!(r&&r.c&&r.m.ok))throw {message:'GONE'};RM=joinFound(r);}
+  try{const lp=await getLP();const r=await ask(lp,SLOT(i),{t:'join'},['hi']);if(!(r&&r.c&&r.m.ok))throw {message:'GONE'};RM=joinFound(r);SESS={kind:'slot',slot:i,host:false};}
   catch(e){fail(e);refreshList().catch(()=>{});return;}
   lockUI(false);$('qc').hidden=true;afterJoin(2,'You joined the game! You are red. Pick your heroes and press “Ready”.');
 }
-async function refreshList(){
-  const g=$('gl');g.textContent='…';
+async function refreshList(quiet){
+  const g=$('gl');if(!quiet)g.textContent='…';
   const lp=await getLP();
   const rs=await Promise.all(Array.from({length:NS},(_,k)=>ask(lp,SLOT(k+1),{t:'peek'},['info']).then(r=>({i:k+1,r}))));
   const open=rs.filter(x=>x.r&&x.r.m&&x.r.m.info&&!x.r.m.info.busy);
   g.innerHTML=open.length?open.map(x=>{const f=x.r.m.info,n=(+f.n)||15,ml=(+f.ml)||0;return '<div class="gi"><span><b>'+esc(f.name)+'</b> · '+n+'×'+n+' · '+(ml?ml+' moves':'no limit')+'</span><button data-i="'+x.i+'">+</button></div>';}).join(''):'No open games yet. Create your own!';
 }
-function setMode(on){online=on;if(on&&!window.claude&&!RM)refreshList().catch(()=>{});$('onl').hidden=!on;$('mLocal').classList.toggle('sel',!on);$('mOnline').classList.toggle('sel',on);$('go').textContent=on?'Ready':'Start game';renderPk();}
+function setMode(on){online=on;$('rs').hidden=!(on&&hasSess());if(on&&!window.claude&&!RM)refreshList().catch(()=>{});$('onl').hidden=!on;$('mLocal').classList.toggle('sel',!on);$('mOnline').classList.toggle('sel',on);$('go').textContent=on?'Ready':'Start game';renderPk();}
 $('mLocal').onclick=()=>{if(!RM)setMode(false);};
 $('mOnline').onclick=()=>setMode(true);
 $('qm').onclick=connectQuick;$('qc').onclick=()=>location.reload();
 $('rf').onclick=()=>refreshList().catch(()=>{});
 $('gl').onclick=e=>{const b=e.target.closest('button[data-i]');if(b)joinSlot(+b.dataset.i);};
 if(window.claude){$('qm').hidden=true;$('seg').hidden=true;$('lobby').hidden=true;}
-function createClosed(){const c=String(10000+Math.floor(Math.random()*90000));$('code').value=c;connect(c,1);}
+function createClosed(){const c=String(10000+Math.floor(Math.random()*90000));$('code').value=c;connect(c,1);if(!window.claude)$('sh').hidden=false;}
 $('cg').onclick=()=>{const closed=window.claude||document.querySelector('input[name=gt]:checked').value==='closed';closed?createClosed():createOpen();};
 $('jn').onclick=()=>{const c=$('code').value.replace(/\D/g,'').slice(0,5);if(c.length<5){$('rinfo').textContent='Enter the 5-digit code';return;}connect(c,2);};
 $('go').onclick=()=>{
   if(!online){init();return;}
-  myHeroes=[...chosen[side]];$('rinfo').textContent='Waiting for opponent…';renderPk();tick();tryStart();
+  myHeroes=[...chosen[side]];myName=$('gname').value.trim().slice(0,16);if(side===1){const v=$('fs').value;myFirst=v==='me'?1:v==='opp'?2:1+(Math.random()*2|0);}$('rinfo').textContent='Waiting for opponent…';renderPk();tick();tryStart();
 };
-$('new').onclick=()=>{if(online){location.reload();return;}$('setup').hidden=false;$('game').hidden=true;};
+$('new').onclick=()=>{if(online){try{localStorage.removeItem(SK);}catch(e){}location.reload();return;}$('setup').hidden=false;$('game').hidden=true;};
 $('end').onclick=()=>{if(!over){finish();ui();draw();}};
 function buildHeroes(){$('heroes').innerHTML=POOL.map(id=>'<div class="hr"><img class="fg" src="'+FIGURL[id]+'" alt=""><div><b>'+AB[id][0]+' <small style="color:var(--muted)">· '+(MAGE(id)?'Mage':'Soldier')+'</small></b><span>'+AB[id][2]+'</span></div></div>').join('');}
 buildHeroes();
@@ -614,6 +627,44 @@ $('sur').onclick=()=>{
 $('rm').onclick=()=>{if(!online){init();return;}myRem=true;send('ready',{side,rematch:G});ui();tryRematch();};
 addEventListener('resize',draw);
 matchMedia('(prefers-color-scheme:dark)').addEventListener('change',draw);
+
+function saveSess(){
+  try{
+    if(!online||!started||over||!SESS){localStorage.removeItem(SK);return;}
+    localStorage.setItem(SK,JSON.stringify({t:Date.now(),side,N,ML,G,first:FIRST,nm,sess:SESS,LOG,heroes:{1:[...chosen[1]],2:[...chosen[2]]}}));
+  }catch(e){}
+}
+function hasSess(){try{const d=JSON.parse(localStorage.getItem(SK));return !!(d&&d.sess&&d.LOG&&Date.now()-d.t<12*3600*1000);}catch(e){return false;}}
+async function resumeGame(){
+  let d=null;try{d=JSON.parse(localStorage.getItem(SK));}catch(e){}
+  if(!d||!d.sess)return;
+  lockUI(true);$('rs').disabled=true;$('rinfo').textContent='Connecting to the game…';
+  try{
+    const S0=d.sess;
+    if(S0.kind==='claude'){const room=await claude.use('room');RM=await room.join('tochki-'+S0.code);}
+    else if(S0.kind==='code'){let err=null;for(let k=0;k<8&&!RM;k++){try{RM=await peerRoom(S0.code,S0.host?1:2);}catch(e){err=e;await sleep(2500);}}if(!RM)throw err||{message:'GONE'};}
+    else if(S0.host){let p=null;for(let k=0;k<10&&!p;k++){const r=await hostAt(SLOT(S0.slot));if(typeof r==='object')p=r;else await sleep(1500);}if(!p)throw {message:'GONE'};RM=await becomeHost(p);}
+    else{const lp=await getLP();let r=null;for(let k=0;k<10&&!r;k++){const q=await ask(lp,SLOT(S0.slot),{t:'join'},['hi']);if(q&&q.c&&q.m.ok)r=q;else await sleep(2000);}if(!r)throw {message:'GONE'};RM=joinFound(r);}
+    SESS=S0;
+  }catch(e){RM=null;fail(e);$('rs').disabled=false;return;}
+  lockUI(false);$('qc').hidden=true;
+  online=true;side=d.side;started=true;N=d.N;ML=d.ML;G=d.G;FIRST=d.first;nm=d.nm||{1:'',2:''};
+  chosen[1]=new Set(d.heroes[1]);chosen[2]=new Set(d.heroes[2]);
+  afterJoin(d.side,'');
+  const saved=d.LOG;LOG=[];init();
+  for(const a of saved){LOG.push(a);applyAct(a);}
+  say('Game restored. '+name(turn)+"'s turn");ui();draw();
+}
+$('rs').onclick=resumeGame;
+$('sh').onclick=async()=>{
+  const u=location.origin+location.pathname+'#'+$('code').value;
+  try{
+    if(navigator.share)await navigator.share({title:'Dots',text:'Shall we play Dots?',url:u});
+    else{await navigator.clipboard.writeText(u);$('rinfo').textContent='Link copied: '+u;}
+  }catch(e){}
+};
+setInterval(()=>{if(online&&!RM&&!window.claude&&!document.hidden&&!$('onl').hidden)refreshList(true).catch(()=>{});},8000);
+{const hm=/^#(\d{5})$/.exec(location.hash);if(hm){setMode(true);$('code').value=hm[1];connect(hm[1],2);}}
 </script>
 </body>
 </html>
